@@ -11,7 +11,12 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.save_util import load_from_zip_file
 from torch import Tensor, nn
 
-from src.policy import CarRacingCNN, CarRacingCNNLegacy
+from src.policy import CarRacingCNN
+
+try:
+    from src.policy import CarRacingCNNLegacy
+except ImportError:  # New-model export does not require old-checkpoint support.
+    CarRacingCNNLegacy = None
 
 
 class CarRacingInference(nn.Module): 
@@ -83,13 +88,21 @@ def build_inference_model(checkpoint_path: str | Path) -> CarRacingInference:
     )
     load_options = {}
     if is_legacy:
+        if CarRacingCNNLegacy is None:
+            raise RuntimeError(
+                "This is a legacy checkpoint, but CarRacingCNNLegacy is not "
+                "available in src.policy. Sync the legacy class before export."
+            )
         policy_kwargs = dict(data["policy_kwargs"])
         policy_kwargs["features_extractor_class"] = CarRacingCNNLegacy
         load_options["custom_objects"] = {"policy_kwargs": policy_kwargs}
 
     model = PPO.load(str(checkpoint_path), device="cpu", **load_options)
     extractor = model.policy.features_extractor
-    if not isinstance(extractor, (CarRacingCNN, CarRacingCNNLegacy)):
+    supported_extractors = (CarRacingCNN,)
+    if CarRacingCNNLegacy is not None:
+        supported_extractors += (CarRacingCNNLegacy,)
+    if not isinstance(extractor, supported_extractors):
         raise TypeError(
             "The checkpoint uses an unsupported feature extractor; "
             "cannot export this policy"

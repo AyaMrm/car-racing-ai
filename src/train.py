@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+import torch.nn as nn
 import yaml
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import CheckpointCallback
@@ -11,7 +12,12 @@ from stable_baselines3.common.utils import get_schedule_fn
 from stable_baselines3.common.vec_env import DummyVecEnv
 
 from src.env import NoProgressTermination, RandomTrackSeed, make_env
-from src.policy import CarRacingCNN, CarRacingCNNLegacy
+from src.policy import CarRacingCNN
+
+try:
+    from src.policy import CarRacingCNNLegacy
+except ImportError:  # Legacy support is optional for fresh policy_net training.
+    CarRacingCNNLegacy = None
 
 
 def load_config(path: str | Path) -> dict:
@@ -26,8 +32,9 @@ def get_features_extractor_class(network_config: dict):
     name = network_config.get("features_extractor", "CarRacingCNN")
     extractors = {
         "CarRacingCNN": CarRacingCNN,
-        "CarRacingCNNLegacy": CarRacingCNNLegacy,
     }
+    if CarRacingCNNLegacy is not None:
+        extractors["CarRacingCNNLegacy"] = CarRacingCNNLegacy
     try:
         return extractors[name]
     except KeyError as exc:
@@ -103,7 +110,10 @@ def train(
             )
         total_timesteps = int(training_config["additional_timesteps"])
         load_kwargs = {}
-        if features_extractor_class is CarRacingCNNLegacy:
+        if (
+            CarRacingCNNLegacy is not None
+            and features_extractor_class is CarRacingCNNLegacy
+        ):
             # The legacy archive stores CarRacingCNN as its extractor class.
             # Override that class before SB3 reconstructs the saved policy so
             # the old projection-layer parameters load into the legacy layout.
@@ -158,6 +168,30 @@ def train(
             },
             verbose=1,
             device="auto",
+        )
+
+    expected_widths = network_config.get("policy_net_widths")
+    if expected_widths is not None:
+        policy_net = getattr(model.policy.features_extractor, "policy_net", None)
+        if policy_net is None:
+            raise ValueError(
+                "The selected feature extractor has no policy_net. "
+                "Check that src/policy.py is synchronized with the 4-layer run."
+            )
+        actual_widths = [
+            layer.out_features
+            for layer in policy_net.modules()
+            if isinstance(layer, nn.Linear)
+        ]
+        expected_widths = [int(width) for width in expected_widths]
+        if actual_widths != expected_widths:
+            raise ValueError(
+                "policy_net layer widths do not match the experiment config: "
+                f"expected {expected_widths}, got {actual_widths}"
+            )
+        print(
+            "Verified policy_net linear layers: "
+            + " -> ".join(map(str, actual_widths))
         )
 
     try:

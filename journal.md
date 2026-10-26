@@ -264,3 +264,5 @@ After training, export and evaluate the model on the three reserved seeds:
 .venv\Scripts\python.exe -m src.eval_official --model checkpoints\ppo_car_racing_policy_net_4layer_900k_model.pt --seed 42 --steps 3000
 .venv\Scripts\python.exe -m src.eval_official --model checkpoints\ppo_car_racing_policy_net_4layer_900k_model.pt --seed 203 --steps 3000
 ```
+
+I also fixed the startup issue seen in the remote runtime. A fresh run no longer requires `CarRacingCNNLegacy` just to import `train.py`; legacy support is optional and is only needed when selecting or exporting an old legacy checkpoint. The 900k config declares the expected `policy_net` widths (`2048, 1024, 512, 256`). Before learning starts, `train.py` checks that the constructed PPO model actually has those four layers and prints their widths. If the remote `policy.py` is stale or has a different architecture, training stops with a clear error instead of spending hours on the wrong network. The exporter follows the same optional-legacy rule for new-model exports.

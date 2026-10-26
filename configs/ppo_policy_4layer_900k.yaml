@@ -23,6 +23,7 @@ ppo:
 network:
   features_extractor: CarRacingCNN
   features_dim: 256
+  policy_net_widths: [2048, 1024, 512, 256]
   policy_hidden_layers: []
   value_hidden_layers: []
 
