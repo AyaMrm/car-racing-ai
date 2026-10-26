@@ -38,7 +38,11 @@ class CarRacingCNN(BaseFeaturesExtractor):
         # It must output features_dim values, not the three CarRacing actions:
         # SB3 constructs and trains the action/value heads after this extractor.
         self.policy_net = nn.Sequential(
-            nn.Linear(flattened_size, 512),
+            nn.Linear(flattened_size, 2048),
+            nn.ReLU(),
+            nn.Linear(2048, 1024),
+            nn.ReLU(),
+            nn.Linear(1024, 512),
             nn.ReLU(),
             nn.Linear(512, features_dim),
             nn.ReLU(),

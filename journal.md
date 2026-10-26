@@ -158,14 +158,109 @@ I have not run the brake ablation or the rendered evaluation yet. No brake limit
 
 
 
-## Day 3 
+## Day 3
 
 ### PPO network update and validation
 
-My mentor asked me to add a `policy_net` to the model. I first noticed that my partial edit was incomplete: the CNN output was not flattened, the hard-coded `64 * 7 * 7` size did not match the actual convolution output, and the new network was not called by `forward()`. Its final three-unit layer would also duplicate the action head that PPO already provides.
+My mentor asked me to add a `policy_net` to the model. My first version was incomplete: the CNN output was not flattened, the hard-coded size (`64 * 7 * 7`) did not match the real size, and the new network was not used in `forward()`. Its final 3-output layer also duplicated the action head that PPO already creates.
 
-I corrected `src/policy.py`. The three convolution layers now flatten their output, and a dynamically sized dense `policy_net` maps it from 4,096 values to 512 hidden units and then to 256 features. Stable-Baselines3 uses those features for its actor and critic; PPO still creates the action and value outputs. I updated `src/export.py` to use the same feature network at inference and created separate pilot and longer-training configurations for this architecture.
+I fixed `src/policy.py`. The 3 convolution layers now flatten their output, and then the `policy_net` transforms it (4096 values -> 512 neurons -> 256 features). Stable-Baselines3 uses these 256 features for the actor and the critic. I updated `src/export.py` to use the same network at inference time.
 
-I stopped the earlier training around iteration 9 and ran a fresh 4,096-step pilot with the updated architecture. It completed one PPO iteration on CPU (77 FPS, 53 seconds) and saved `checkpoints/ppo_car_racing_policy_pilot.zip`. I then exported that checkpoint and tested it for 20 steps on raw RGB observations from seed 202. Export and `torch.jit.load()` succeeded; the output had shape `(3,)` and actions stayed within the environment bounds. Mean action was approximately `[-0.002, 0.116, 0.000]`, with total reward `8.870` over 20 steps. These short checks verify the training and inference interfaces, not lap completion or driving quality.
+A one-iteration test (4,096 steps) followed by an export worked, and the actions stayed within bounds. This only checks that the pipeline works technically, not the quality of the driving. This new network has different parameters from the old one, so I could not resume the old 300k checkpoint with it.
 
-The new architecture changes the feature-extractor parameter shapes and names, so I must not resume the old 300k checkpoint with it. I prepared `configs/ppo_policy_train.yaml` to continue from the new pilot for 500,000 additional timesteps (about 504k total). That longer run has not been started. TorchScript deprecation warnings still appear, and the official `torch.load()` compatibility issue remains unresolved.
+### 500k policy run and full-sequence export check
+
+I trained the new model for about 500k steps. On the random training tracks, it improved clearly: the average score went from about -231 to about +609. However, on the reserved tracks, it performed poorly:
+
+- seed 202: -213 (about 24 tiles);
+- seed 42: it left the track after 232 steps;
+- seed 203: it left the track after 238 steps.
+
+I also found a bug in the export. The exported TorchScript model did not produce exactly the same actions as the training model. The cause was the grayscale computation: NumPy computes in double precision, while my export used single precision. A single pixel differed by one intensity level (at step 132), but that was enough to change the actions (at step 135). I fixed the export to compute in double precision. Since then, images, actions, and rewards have been identical over the whole tested sequence. The export problem is solved. The real problem, poor driving on unseen tracks, remains open.
+
+### Deterministic-policy training adjustment
+
+The model got good scores during training, where actions are sampled randomly, but was unreliable during evaluation, where it always uses the mean action. I therefore adjusted the training:
+
+- learning rate: 0.0003 -> 0.0001 (smaller updates);
+- entropy coefficient: 0.01 -> 0.001 (less forced exploration).
+
+These are hypotheses to test, not proven improvements. I also fixed `src/train.py`: when resuming a training run, `PPO.load()` reloaded the old learning rate, and changing only the attribute would have had no effect. The code now updates the learning rate everywhere (attribute, schedule, and optimizer). Each experiment has its own log and checkpoint folders so that nothing is overwritten. No result is claimed here: the model must first be evaluated on seeds 202, 42, and 203.
+
+### Six-hour training plan and checkpoint comparison
+
+I compared three models. The result that looked inconsistent on seed 202 (-213 versus +51) actually came from two different models.
+
+| Model | Seed 202 | Seed 42 | Seed 203 |
+|---|---|---|---|
+| Legacy 300k | about 112 tiles, reached the 3,000-step limit | about 39 tiles, reached the 3,000-step limit | about 46 tiles, reached the 3,000-step limit |
+| Tuned 500k (lr 1e-4, ent 1e-3) | about 97 tiles, reached the 3,000-step limit | about 42 tiles, left the track at step 2,666 | about 50 tiles, left the track at step 1,895 |
+
+Tiles are estimated from the reward, not measured directly. When the car leaves the playfield, the episode stops with a -100 penalty. Both models make about the same progress, but the legacy one is more stable. The legacy 300k initially could not be resumed with the current CNN because its parameters were incompatible. I later added explicit legacy architecture support and kept its export as a fallback.
+
+For the next experiment, I added a training-only rule: an episode stops with a -100 penalty if the car visits no new tile for 100 steps. I did not add frame skipping, so that I could isolate the effect of this rule.
+
+### 300k no-progress fine-tuning result
+
+I trained for 300,000 more steps with the "stop if no progress" rule, then evaluated in the normal environment. The model reached the 3,000-step limit on all three seeds, but did not finish any lap:
+
+- seed 202: about 110 tiles;
+- seed 42: about 52 tiles;
+- seed 203: about 26 tiles.
+
+It survived longer on 42 and 203, but progress remained uneven. The rule therefore did not clearly improve the driving.
+
+### Legacy 300k architecture resume support
+
+Since the legacy 300k covered the reserved tracks slightly better, I wanted to continue its training. I added a `CarRacingCNNLegacy` class (same convolutions, old single `projection` layer) next to the current CNN. `train.py` chooses the right class from the config, and `export.py` automatically detects the legacy architecture. The export of the 300k model gives exactly the same actions as the SB3 model (maximum difference 0.0).
+
+I then resumed training for 300,000 steps, for 606,208 steps in total (about 4 hours), without the stop rule. Results on the reserved seeds, all at the 3,000-step limit, with no lap completed:
+
+- seed 202: about 150 tiles (112 before);
+- seed 42: about 38 tiles (39 before);
+- seed 203: about 41 tiles (46 before).
+
+The average went from about 66 to 76 tiles, but only thanks to seed 202. The model brakes a lot on 202 and 42. This was a modest, uneven gain.
+
+### Standard continuation configuration prepared
+
+I prepared the next step: `configs/ppo_legacy_600k_standard_continue.yaml` resumes the legacy 600k model for 300,000 more steps, with the normal environment, `learning_rate: 0.0001`, and `ent_coef: 0.001`. I am not using the stop rule, because it helped survival without allowing a lap to be finished. The configuration and checkpoint loading were validated without starting the training. No result is claimed.
+
+### Standard continuation launched
+
+On October 26, I launched this training with:
+
+```powershell
+.venv\Scripts\python.exe -m src.train `
+  --config configs\ppo_legacy_600k_standard_continue.yaml `
+  --resume checkpoints\ppo_car_racing_legacy_600k_lr1e4_ent1e3.zip
+```
+
+The logs and checkpoints have their own folders (`logs/legacy_600k_standard_continue` and `checkpoints/legacy_600k_standard_continue`), so nothing is overwritten. The final model will be `checkpoints/ppo_car_racing_legacy_900k_standard.zip`.
+
+At the time of this entry, the process was still running, with no completed episode and no checkpoint yet. No improvement is therefore claimed. Once training finishes, I must export the model, evaluate it on seeds 202, 42, and 203, and compare it with the current best (`ppo_car_racing_legacy_600k_lr1e4_ent1e3_model.pt`).
+
+## Day 4 
+
+### Four-layer policy network experiment
+
+I changed `CarRacingCNN.policy_net` to use four fully connected layers after the three convolution layers: `4096 -> 2048 -> 1024 -> 512 -> 256`. The last 256 values are visual features shared by PPO's actor and critic; they are not the three driving actions. Stable-Baselines3 still creates the actor and critic output heads.
+
+I prepared `configs/ppo_policy_4layer_900k.yaml` for a fresh 900,000-timestep run. It selects `CarRacingCNN`, uses the existing grayscale four-frame observations, keeps the normal 3,000-step episode limit, and uses four vector environments. The run keeps the current conservative PPO settings (`learning_rate: 0.0001`, `ent_coef: 0.001`) so that the main architectural change is the four-layer feature network. I did not enable the training-only no-progress termination rule.
+
+This configuration starts from scratch: it uses `total_timesteps`, does not load an older checkpoint, and writes logs, intermediate checkpoints, and the final SB3 model to new `policy_net_4layer_900k` paths. Old checkpoints have incompatible dense-layer shapes and must not be used with `--resume`. The four-layer network has about 11.2 million parameters, so training may be slower than the smaller earlier network. The configuration has been prepared, but this experiment has not yet been launched and no performance improvement is claimed.
+
+To run the experiment:
+
+```powershell
+.venv\Scripts\python.exe -m src.train --config configs\ppo_policy_4layer_900k.yaml
+```
+
+After training, export and evaluate the model on the three reserved seeds:
+
+```powershell
+.venv\Scripts\python.exe -m src.export checkpoints\ppo_car_racing_policy_net_4layer_900k.zip --output checkpoints\ppo_car_racing_policy_net_4layer_900k_model.pt
+.venv\Scripts\python.exe -m src.eval_official --model checkpoints\ppo_car_racing_policy_net_4layer_900k_model.pt --seed 202 --steps 3000
+.venv\Scripts\python.exe -m src.eval_official --model checkpoints\ppo_car_racing_policy_net_4layer_900k_model.pt --seed 42 --steps 3000
+.venv\Scripts\python.exe -m src.eval_official --model checkpoints\ppo_car_racing_policy_net_4layer_900k_model.pt --seed 203 --steps 3000
+```

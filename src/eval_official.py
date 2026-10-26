@@ -28,7 +28,6 @@ def check_model(
         raise ValueError("min_gas must be between 0 and 1")
     if trace_every < 0:
         raise ValueError("trace_every cannot be negative")
-
     model = torch.jit.load(str(model_path), map_location="cpu")
     model.eval()
     if hasattr(model, "reset_state"):

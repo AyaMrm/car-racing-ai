@@ -9,14 +9,14 @@ training:
   checkpoint_frequency: 100000
 
 ppo:
-  learning_rate: 0.0003
+  learning_rate: 0.0001
   n_steps: 1024
   batch_size: 256
   n_epochs: 10
   gamma: 0.99
   gae_lambda: 0.95
   clip_range: 0.2
-  ent_coef: 0.01
+  ent_coef: 0.001
   vf_coef: 0.5
   max_grad_norm: 0.5
 
@@ -26,6 +26,6 @@ network:
   value_hidden_layers: []
 
 paths:
-  checkpoints: checkpoints
-  logs: logs/policy_500k
-  final_model: checkpoints/ppo_car_racing_policy_500k
+  checkpoints: checkpoints/policy_500k_lr1e4_ent1e3
+  logs: logs/policy_500k_lr1e4_ent1e3
+  final_model: checkpoints/ppo_car_racing_policy_500k_lr1e4_ent1e3

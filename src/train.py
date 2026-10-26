@@ -7,10 +7,11 @@ import yaml
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import CheckpointCallback
 from stable_baselines3.common.monitor import Monitor
+from stable_baselines3.common.utils import get_schedule_fn
 from stable_baselines3.common.vec_env import DummyVecEnv
 
-from src.env import RandomTrackSeed, make_env
-from src.policy import CarRacingCNN
+from src.env import NoProgressTermination, RandomTrackSeed, make_env
+from src.policy import CarRacingCNN, CarRacingCNNLegacy
 
 
 def load_config(path: str | Path) -> dict:
@@ -19,6 +20,18 @@ def load_config(path: str | Path) -> dict:
     if not isinstance(config, dict):
         raise ValueError("The PPO configuration must contain a YAML mapping")
     return config
+
+
+def get_features_extractor_class(network_config: dict):
+    name = network_config.get("features_extractor", "CarRacingCNN")
+    extractors = {
+        "CarRacingCNN": CarRacingCNN,
+        "CarRacingCNNLegacy": CarRacingCNNLegacy,
+    }
+    try:
+        return extractors[name]
+    except KeyError as exc:
+        raise ValueError(f"Unknown features_extractor: {name}") from exc
 
 
 def make_training_env(config: dict, index: int):
@@ -30,6 +43,13 @@ def make_training_env(config: dict, index: int):
             max_episode_steps=env_config["max_episode_steps"],
             frame_stack_size=env_config["frame_stack_size"],
         )
+        progress_patience = int(env_config.get("no_progress_patience", 0))
+        if progress_patience > 0:
+            env = NoProgressTermination(
+                env,
+                patience=progress_patience,
+                penalty=float(env_config.get("no_progress_penalty", 100.0)),
+            )
         env = RandomTrackSeed(env)
         return Monitor(env, filename=str(log_dir / f"env_{index}"))
 
@@ -45,6 +65,7 @@ def train(
     training_config = config["training"]
     ppo_config = config["ppo"]
     network_config = config["network"]
+    features_extractor_class = get_features_extractor_class(network_config)
     paths = config["paths"]
 
     n_envs = int(env_config["n_envs"])
@@ -81,7 +102,34 @@ def train(
                 "A resume config must define training.additional_timesteps"
             )
         total_timesteps = int(training_config["additional_timesteps"])
-        model = PPO.load(str(resume_from), env=env, device="auto")
+        load_kwargs = {}
+        if features_extractor_class is CarRacingCNNLegacy:
+            # The legacy archive stores CarRacingCNN as its extractor class.
+            # Override that class before SB3 reconstructs the saved policy so
+            # the old projection-layer parameters load into the legacy layout.
+            load_kwargs["custom_objects"] = {
+                "policy_kwargs": {
+                    "features_extractor_class": CarRacingCNNLegacy,
+                    "features_extractor_kwargs": {
+                        "features_dim": int(network_config["features_dim"])
+                    },
+                    "net_arch": {
+                        "pi": network_config["policy_hidden_layers"],
+                        "vf": network_config["value_hidden_layers"],
+                    },
+                }
+            }
+        model = PPO.load(
+            str(resume_from), env=env, device="auto", **load_kwargs
+        )
+        # A resumed model keeps its learned weights but uses the current
+        # experiment's optimizer schedule and exploration settings.
+        learning_rate = float(ppo_config["learning_rate"])
+        model.learning_rate = learning_rate
+        model.lr_schedule = get_schedule_fn(learning_rate)
+        for parameter_group in model.policy.optimizer.param_groups:
+            parameter_group["lr"] = learning_rate
+        model.ent_coef = float(ppo_config["ent_coef"])
     else:
         total_timesteps = int(training_config["total_timesteps"])
         model = PPO(
@@ -99,7 +147,7 @@ def train(
             max_grad_norm=float(ppo_config["max_grad_norm"]),
             seed=int(training_config["seed"]),
             policy_kwargs={
-                "features_extractor_class": CarRacingCNN,
+                "features_extractor_class": features_extractor_class,
                 "features_extractor_kwargs": {
                     "features_dim": int(network_config["features_dim"])
                 },

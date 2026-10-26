@@ -8,21 +8,21 @@ from pathlib import Path
 import numpy as np
 import torch
 from stable_baselines3 import PPO
+from stable_baselines3.common.save_util import load_from_zip_file
 from torch import Tensor, nn
 
-from src.policy import CarRacingCNN
+from src.policy import CarRacingCNN, CarRacingCNNLegacy
 
 
 class CarRacingInference(nn.Module): 
 
     def __init__(
         self,
-        feature_extractor: CarRacingCNN,
+        feature_extractor: nn.Module,
         action_head: nn.Linear,
     ) -> None:
         super().__init__()
-        self.cnn = feature_extractor.cnn
-        self.policy_net = feature_extractor.policy_net
+        self.features_extractor = feature_extractor
         self.action_head = action_head
         self.register_buffer(
             "frame_stack", torch.zeros((4, 96, 96), dtype=torch.uint8)
@@ -42,7 +42,9 @@ class CarRacingInference(nn.Module):
         if observation.shape[0] != 96 or observation.shape[1] != 96:
             raise ValueError("Expected 96x96 CarRacing observations")
 
-        rgb = observation.to(dtype=torch.float32)
+        # Match GrayScaleFrameStack._to_grayscale, whose NumPy dot product
+        # uses float64 coefficients and arithmetic before rounding to uint8.
+        rgb = observation.to(dtype=torch.float64)
         gray_float = (
             rgb[:, :, 0] * 0.299
             + rgb[:, :, 1] * 0.587
@@ -59,7 +61,7 @@ class CarRacingInference(nn.Module):
             )
 
         stacked_image = self.frame_stack.unsqueeze(0).to(dtype=torch.float32) / 255.0
-        features = self.policy_net(self.cnn(stacked_image))
+        features = self.features_extractor(stacked_image)
         action_mean = self.action_head(features).squeeze(0)
 
         lower = torch.tensor([-1.0, 0.0, 0.0], device=action_mean.device)
@@ -68,11 +70,29 @@ class CarRacingInference(nn.Module):
 
 
 def build_inference_model(checkpoint_path: str | Path) -> CarRacingInference:
-    model = PPO.load(str(checkpoint_path), device="cpu")
+    data, parameters, _ = load_from_zip_file(
+        str(checkpoint_path),
+        device="cpu",
+        load_data=True,
+        print_system_info=False,
+    )
+    policy_parameters = parameters["policy"]
+    is_legacy = any(
+        key.startswith("features_extractor.projection.")
+        for key in policy_parameters
+    )
+    load_options = {}
+    if is_legacy:
+        policy_kwargs = dict(data["policy_kwargs"])
+        policy_kwargs["features_extractor_class"] = CarRacingCNNLegacy
+        load_options["custom_objects"] = {"policy_kwargs": policy_kwargs}
+
+    model = PPO.load(str(checkpoint_path), device="cpu", **load_options)
     extractor = model.policy.features_extractor
-    if not isinstance(extractor, CarRacingCNN):
+    if not isinstance(extractor, (CarRacingCNN, CarRacingCNNLegacy)):
         raise TypeError(
-            "The checkpoint does not use CarRacingCNN; cannot export this policy"
+            "The checkpoint uses an unsupported feature extractor; "
+            "cannot export this policy"
         )
     if not isinstance(model.policy.action_net, nn.Linear):
         raise TypeError("Expected PPO's actor output head to be a linear layer")

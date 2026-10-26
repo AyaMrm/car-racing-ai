@@ -53,6 +53,49 @@ class GrayScaleFrameStack(gym.Wrapper):
         return self._frames.copy(), reward, terminated, truncated, info
 
 
+class NoProgressTermination(gym.Wrapper):
+    """End a training episode after too many steps without a new tile."""
+
+    def __init__(
+        self,
+        env: gym.Env,
+        patience: int = 100,
+        penalty: float = 100.0,
+    ):
+        super().__init__(env)
+        if patience < 1:
+            raise ValueError("patience must be at least 1")
+        if penalty < 0:
+            raise ValueError("penalty cannot be negative")
+        self.patience = patience
+        self.penalty = penalty
+        self._steps_without_progress = 0
+
+    def reset(self, **kwargs):
+        self._steps_without_progress = 0
+        return self.env.reset(**kwargs)
+
+    def step(self, action):
+        observation, reward, terminated, truncated, info = self.env.step(action)
+        if reward > 0.0:
+            # Visiting a new tile gives positive reward after the time penalty.
+            self._steps_without_progress = 0
+        else:
+            self._steps_without_progress += 1
+
+        if (
+            self._steps_without_progress >= self.patience
+            and not terminated
+            and not truncated
+        ):
+            reward -= self.penalty
+            terminated = True
+            info = dict(info)
+            info["no_progress_termination"] = True
+
+        return observation, reward, terminated, truncated, info
+
+
 class RandomTrackSeed(gym.Wrapper):
     
     def __init__(self, env: gym.Env, excluded_seeds=EVALUATION_SEEDS):

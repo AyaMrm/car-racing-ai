@@ -1,4 +1,4 @@
-gymnasium[box2d] 
+gymnasium[box2d]
 stable-baselines3
 torch
 PyYAML
