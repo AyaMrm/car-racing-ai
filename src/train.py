@@ -14,11 +14,6 @@ from stable_baselines3.common.vec_env import DummyVecEnv
 from src.env import NoProgressTermination, RandomTrackSeed, make_env
 from src.policy import CarRacingCNN
 
-try:
-    from src.policy import CarRacingCNNLegacy
-except ImportError:  # Legacy support is optional for fresh policy_net training.
-    CarRacingCNNLegacy = None
-
 
 def load_config(path: str | Path) -> dict:
     with Path(path).open("r", encoding="utf-8") as config_file:
@@ -33,8 +28,6 @@ def get_features_extractor_class(network_config: dict):
     extractors = {
         "CarRacingCNN": CarRacingCNN,
     }
-    if CarRacingCNNLegacy is not None:
-        extractors["CarRacingCNNLegacy"] = CarRacingCNNLegacy
     try:
         return extractors[name]
     except KeyError as exc:
@@ -109,29 +102,7 @@ def train(
                 "A resume config must define training.additional_timesteps"
             )
         total_timesteps = int(training_config["additional_timesteps"])
-        load_kwargs = {}
-        if (
-            CarRacingCNNLegacy is not None
-            and features_extractor_class is CarRacingCNNLegacy
-        ):
-            # The legacy archive stores CarRacingCNN as its extractor class.
-            # Override that class before SB3 reconstructs the saved policy so
-            # the old projection-layer parameters load into the legacy layout.
-            load_kwargs["custom_objects"] = {
-                "policy_kwargs": {
-                    "features_extractor_class": CarRacingCNNLegacy,
-                    "features_extractor_kwargs": {
-                        "features_dim": int(network_config["features_dim"])
-                    },
-                    "net_arch": {
-                        "pi": network_config["policy_hidden_layers"],
-                        "vf": network_config["value_hidden_layers"],
-                    },
-                }
-            }
-        model = PPO.load(
-            str(resume_from), env=env, device="auto", **load_kwargs
-        )
+        model = PPO.load(str(resume_from), env=env, device="auto")
         # A resumed model keeps its learned weights but uses the current
         # experiment's optimizer schedule and exploration settings.
         learning_rate = float(ppo_config["learning_rate"])

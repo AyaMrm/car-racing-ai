@@ -8,15 +8,9 @@ from pathlib import Path
 import numpy as np
 import torch
 from stable_baselines3 import PPO
-from stable_baselines3.common.save_util import load_from_zip_file
 from torch import Tensor, nn
 
 from src.policy import CarRacingCNN
-
-try:
-    from src.policy import CarRacingCNNLegacy
-except ImportError:  # New-model export does not require old-checkpoint support.
-    CarRacingCNNLegacy = None
 
 
 class CarRacingInference(nn.Module): 
@@ -75,34 +69,9 @@ class CarRacingInference(nn.Module):
 
 
 def build_inference_model(checkpoint_path: str | Path) -> CarRacingInference:
-    data, parameters, _ = load_from_zip_file(
-        str(checkpoint_path),
-        device="cpu",
-        load_data=True,
-        print_system_info=False,
-    )
-    policy_parameters = parameters["policy"]
-    is_legacy = any(
-        key.startswith("features_extractor.projection.")
-        for key in policy_parameters
-    )
-    load_options = {}
-    if is_legacy:
-        if CarRacingCNNLegacy is None:
-            raise RuntimeError(
-                "This is a legacy checkpoint, but CarRacingCNNLegacy is not "
-                "available in src.policy. Sync the legacy class before export."
-            )
-        policy_kwargs = dict(data["policy_kwargs"])
-        policy_kwargs["features_extractor_class"] = CarRacingCNNLegacy
-        load_options["custom_objects"] = {"policy_kwargs": policy_kwargs}
-
-    model = PPO.load(str(checkpoint_path), device="cpu", **load_options)
+    model = PPO.load(str(checkpoint_path), device="cpu")
     extractor = model.policy.features_extractor
-    supported_extractors = (CarRacingCNN,)
-    if CarRacingCNNLegacy is not None:
-        supported_extractors += (CarRacingCNNLegacy,)
-    if not isinstance(extractor, supported_extractors):
+    if not isinstance(extractor, CarRacingCNN):
         raise TypeError(
             "The checkpoint uses an unsupported feature extractor; "
             "cannot export this policy"

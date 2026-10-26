@@ -212,7 +212,7 @@ It survived longer on 42 and 203, but progress remained uneven. The rule therefo
 
 ### Legacy 300k architecture resume support
 
-Since the legacy 300k covered the reserved tracks slightly better, I wanted to continue its training. I added a `CarRacingCNNLegacy` class (same convolutions, old single `projection` layer) next to the current CNN. `train.py` chooses the right class from the config, and `export.py` automatically detects the legacy architecture. The export of the 300k model gives exactly the same actions as the SB3 model (maximum difference 0.0).
+Since the legacy 300k covered the reserved tracks slightly better, I wanted to continue its training. I added a `ancienne architecture CNN` class (same convolutions, old single `projection` layer) next to the current CNN. `train.py` chooses the right class from the config, and `export.py` automatically detects the legacy architecture. The export of the 300k model gives exactly the same actions as the SB3 model (maximum difference 0.0).
 
 I then resumed training for 300,000 steps, for 606,208 steps in total (about 4 hours), without the stop rule. Results on the reserved seeds, all at the 3,000-step limit, with no lap completed:
 
@@ -265,4 +265,4 @@ After training, export and evaluate the model on the three reserved seeds:
 .venv\Scripts\python.exe -m src.eval_official --model checkpoints\ppo_car_racing_policy_net_4layer_900k_model.pt --seed 203 --steps 3000
 ```
 
-I also fixed the startup issue seen in the remote runtime. A fresh run no longer requires `CarRacingCNNLegacy` just to import `train.py`; legacy support is optional and is only needed when selecting or exporting an old legacy checkpoint. The 900k config declares the expected `policy_net` widths (`2048, 1024, 512, 256`). Before learning starts, `train.py` checks that the constructed PPO model actually has those four layers and prints their widths. If the remote `policy.py` is stale or has a different architecture, training stops with a clear error instead of spending hours on the wrong network. The exporter follows the same optional-legacy rule for new-model exports.
+I also fixed the startup issue seen in the remote runtime. A fresh run no longer requires `ancienne architecture CNN` just to import `train.py`; legacy support is optional and is only needed when selecting or exporting an old legacy checkpoint. The 900k config declares the expected `policy_net` widths (`2048, 1024, 512, 256`). Before learning starts, `train.py` checks that the constructed PPO model actually has those four layers and prints their widths. If the remote `policy.py` is stale or has a different architecture, training stops with a clear error instead of spending hours on the wrong network. The exporter follows the same optional-legacy rule for new-model exports.
