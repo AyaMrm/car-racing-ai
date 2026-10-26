@@ -14,11 +14,6 @@ from stable_baselines3.common.vec_env import DummyVecEnv
 from src.env import NoProgressTermination, RandomTrackSeed, make_env
 from src.policy import CarRacingCNN
 
-try:
-    from src.policy import CarRacingCNNLegacy
-except ImportError:  # Legacy support is optional for fresh policy_net training.
-    CarRacingCNNLegacy = None
-
 
 def load_config(path: str | Path) -> dict:
     with Path(path).open("r", encoding="utf-8") as config_file:
