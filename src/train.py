@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+import torch as th
 import torch.nn as nn
 import yaml
 from stable_baselines3 import PPO
@@ -111,6 +112,12 @@ def train(
         for parameter_group in model.policy.optimizer.param_groups:
             parameter_group["lr"] = learning_rate
         model.ent_coef = float(ppo_config["ent_coef"])
+        model.n_epochs = int(ppo_config["n_epochs"])
+        model.target_kl = (
+            float(ppo_config["target_kl"])
+            if ppo_config.get("target_kl") is not None
+            else None
+        )
     else:
         total_timesteps = int(training_config["total_timesteps"])
         model = PPO(
@@ -126,6 +133,11 @@ def train(
             ent_coef=float(ppo_config["ent_coef"]),
             vf_coef=float(ppo_config["vf_coef"]),
             max_grad_norm=float(ppo_config["max_grad_norm"]),
+            target_kl=(
+                float(ppo_config["target_kl"])
+                if ppo_config.get("target_kl") is not None
+                else None
+            ),
             seed=int(training_config["seed"]),
             policy_kwargs={
                 "features_extractor_class": features_extractor_class,
@@ -140,6 +152,17 @@ def train(
             verbose=1,
             device="auto",
         )
+
+    initial_log_std = ppo_config.get("initial_log_std")
+    if initial_log_std is not None:
+        log_std = getattr(model.policy, "log_std", None)
+        if log_std is None:
+            raise ValueError(
+                "The selected PPO policy has no log_std parameter; "
+                "remove ppo.initial_log_std from the configuration."
+            )
+        with th.no_grad():
+            log_std.fill_(float(initial_log_std))
 
     expected_widths = network_config.get("policy_net_widths")
     if expected_widths is not None:

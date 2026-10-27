@@ -266,3 +266,39 @@ After training, export and evaluate the model on the three reserved seeds:
 ```
 
 I also fixed the startup issue seen in the remote runtime. A fresh run no longer requires `ancienne architecture CNN` just to import `train.py`; legacy support is optional and is only needed when selecting or exporting an old legacy checkpoint. The 900k config declares the expected `policy_net` widths (`2048, 1024, 512, 256`). Before learning starts, `train.py` checks that the constructed PPO model actually has those four layers and prints their widths. If the remote `policy.py` is stale or has a different architecture, training stops with a clear error instead of spending hours on the wrong network. The exporter follows the same optional-legacy rule for new-model exports.
+
+### Conservative continuation from the 900k four-layer checkpoint
+
+The 1800k continuation is intentionally not using the original PPO settings.
+The training logs showed an unstable phase: `clip_fraction` was often above
+0.2 and `approx_kl` reached values far above what is desirable for a stable
+PPO update, including several large spikes. The mean reward dropped sharply
+before recovering, so another 900k steps with the same update size could
+repeat that policy collapse rather than produce a reliable improvement.
+
+For this continuation, `configs/ppo_policy_4layer_1800k.yaml` therefore uses:
+
+- `learning_rate: 0.00003` instead of `0.0001`, to make policy and value
+  updates less aggressive;
+- `n_epochs: 4` instead of `10`, to reduce repeated optimization over the
+  same rollout;
+- `target_kl: 0.03`, which lets SB3 stop an update early when the policy
+  changes too much;
+- `ent_coef: 0.0001` instead of `0.001`, reducing pressure to increase
+  exploration while continuing from a trained policy;
+- `initial_log_std: -1.2`, corresponding to an action standard deviation of
+  about `0.30` when the checkpoint is loaded, to reduce the train/evaluation
+  exploration gap.
+
+`src/train.py` now applies these settings to both a new PPO model and a
+resumed model. In particular, the resume path explicitly updates `n_epochs`
+and `target_kl`; changing only the YAML would otherwise leave the loaded
+model's original values active. Reward normalization was deliberately not
+added in this run so that the effect of the PPO stability changes can be
+measured without introducing a second source of behavior changes.
+
+This is a stability experiment, not evidence that the final score will
+improve. During the run, compare `approx_kl`, `clip_fraction`, action
+standard deviation, episode length, and deterministic evaluation of the
+intermediate checkpoints. The best checkpoint may be earlier than the final
+1800k model.

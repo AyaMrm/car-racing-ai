@@ -9,16 +9,18 @@ training:
   checkpoint_frequency: 100000
 
 ppo:
-  learning_rate: 0.0001
+  learning_rate: 0.00003
   n_steps: 1024
   batch_size: 256
-  n_epochs: 10
+  n_epochs: 4
   gamma: 0.99
   gae_lambda: 0.95
   clip_range: 0.2
-  ent_coef: 0.001
+  ent_coef: 0.0001
   vf_coef: 0.5
   max_grad_norm: 0.5
+  target_kl: 0.03
+  initial_log_std: -1.2
 
 network:
   features_extractor: CarRacingCNN
