@@ -1,0 +1,33 @@
+environment:
+  max_episode_steps: 3000
+  frame_stack_size: 4
+  n_envs: 4
+
+training:
+  additional_timesteps: 900000
+  seed: 12345
+  checkpoint_frequency: 100000
+
+ppo:
+  learning_rate: 0.0001
+  n_steps: 1024
+  batch_size: 256
+  n_epochs: 10
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.001
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+
+network:
+  features_extractor: CarRacingCNN
+  features_dim: 256
+  policy_net_widths: [2048, 1024, 512, 256]
+  policy_hidden_layers: []
+  value_hidden_layers: []
+
+paths:
+  checkpoints: checkpoints/policy_net_4layer_1800k
+  logs: logs/policy_net_4layer_1800k
+  final_model: checkpoints/ppo_car_racing_policy_net_4layer_1800k
